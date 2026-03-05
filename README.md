@@ -99,15 +99,6 @@ NotificationsAPI/
 - Program.cs
 - **Dependências**: Application, Infrastructure
 
-### 🔄 Fluxo de Dependência
-
-```mermaid
-graph TD;
-    A[Domain] <-- B[Application];
-    B <-- C[Infrastructure];
-    C <-- D[API];
-```
-
 **Regra importante**: As dependências devem sempre apontar para o centro, nunca para fora.
 
 ## 🛠️ Tecnologias
@@ -123,18 +114,6 @@ graph TD;
 - .NET 8.0 SDK instalado
 - Visual Studio 2026 ou VS Code
 
-### Restaurar Dependências
-
-````````
-Producer (Origem)
-    ↓
-    ├─→ Exchange (Distribuidor)
-            ↓
-            ├─→ Queue (Fila)
-                    ↓
-                    Consumer (Consumidor)
-
-````````
 
 ┌─────────────────────────────────────────────────────────┐
 │                    NotificationsAPI                      │
@@ -275,31 +254,19 @@ Serviço B (Payment Service)
 ---
 
 ## 🐳 Como Executar com Docker
+Para criar a imagem da API Notification executar o comando no terminal:
+docker build -t notifications-api .
 
-### Pré-requisitos
+Com a imagem criada, executar o comando para subir a API:
+docker run -d --name notifications-api -p 8080:8080 notifications-api
 
-- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e em execução
+**Obs.:** Certifique-se de que o RabbitMQ esteja rodando localmente ou em um container separado, e que as configurações de conexão estejam corretas no `appsettings.json` da API.
+É necessario ter um arquivo dockerfile na raiz do projeto com o seguinte conteúdo:
+```dockerfile
 
-### Passo 1 — Subir os containers
 
-Na raiz do projeto, execute:
-
-````````
-docker-compose up -d
-````````
-
-Isso irá:
-- Baixar as imagens necessárias
-- Criar e iniciar os containers em modo détaché (background)
-
-Isso irá subir **dois containers**:
-
-| Serviço        | Porta(s)                     | Descrição                           |
-|----------------|------------------------------|-------------------------------------|
-| `rabbitmq`     | `5672` (AMQP) / `15672` (UI) | Broker de mensageria                |
-| `notifications-api` | `8080` (HTTP)           | API de notificações (.NET 8)        |
-
-### Passo 2 — Verificar se o RabbitMQ está pronto
+Executar o comando no terminal para subir os containers do RabbitMQ:
+docker run -d --hostname my-rabbit --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
 
 Acesse o painel de gerenciamento do RabbitMQ:
 
@@ -320,8 +287,6 @@ docker-compose logs -f notifications-api
 Você deve ver:
 🚀 Iniciando consumidores RabbitMQ... 🐇 Consumidor iniciado na fila: 'user-created-queue' 🐇 Consumidor iniciado na fila: 'payment-processed-queue' ✅ Todos os consumidores RabbitMQ estão ativos!
 
-### Passo 5 — Parar os containers
-docker-compose down
 ````````
 
 ## 📨 Testando com Payloads via RabbitMQ Management UI
