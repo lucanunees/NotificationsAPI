@@ -1,12 +1,12 @@
-# NotificationsAPI
+# 🔔 NotificationsAPI — FIAP Cloud Games (FCG)
 
-API para gerenciamento e envio de notificações com arquitetura limpa em camadas.
+API de Notificações do FIAP Cloud Games (FCG) — Envio de e-mails de boas-vindas e confirmações de compra via RabbitMQ.
 
-## 🏗️ Arquitetura
+**Stack**: .NET 8 | ASP.NET Core | RabbitMQ | Clean Architecture
 
-O projeto segue o padrão de **Arquitetura Limpa em Camadas**, garantindo separação de responsabilidades, testabilidade e manutenibilidade.
+---
 
-### 📂 Estrutura de Diretórios
+## 📁 Estrutura do Projeto
 
 ````````
 NotificationsAPI.Domain/
@@ -269,3 +269,88 @@ Serviço B (Payment Service)
   ↓
   📝 Log no console
   💾 Persistir notificação
+
+````````
+
+---
+
+## 🐳 Como Executar com Docker
+
+### Pré-requisitos
+
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e em execução
+
+### Passo 1 — Subir os containers
+
+Na raiz do projeto, execute:
+
+````````
+docker-compose up -d
+````````
+
+Isso irá:
+- Baixar as imagens necessárias
+- Criar e iniciar os containers em modo détaché (background)
+
+Isso irá subir **dois containers**:
+
+| Serviço        | Porta(s)                     | Descrição                           |
+|----------------|------------------------------|-------------------------------------|
+| `rabbitmq`     | `5672` (AMQP) / `15672` (UI) | Broker de mensageria                |
+| `notifications-api` | `8080` (HTTP)           | API de notificações (.NET 8)        |
+
+### Passo 2 — Verificar se o RabbitMQ está pronto
+
+Acesse o painel de gerenciamento do RabbitMQ:
+
+- **URL**: http://localhost:15672
+- **Usuário**: `guest`
+- **Senha**: `guest`
+
+Aguarde até que as filas `user-created-queue` e `payment-processed-queue` apareçam na aba **Queues** (são criadas automaticamente pelo consumidor da API).
+
+### Passo 3 — Acessar o Swagger
+
+- **URL**: http://localhost:8080/swagger/V1/swagger.json
+- **Swagger UI**: http://localhost:8080/swagger/index.html
+
+### Passo 4 — Verificar os logs
+docker-compose logs -f notifications-api
+
+Você deve ver:
+🚀 Iniciando consumidores RabbitMQ... 🐇 Consumidor iniciado na fila: 'user-created-queue' 🐇 Consumidor iniciado na fila: 'payment-processed-queue' ✅ Todos os consumidores RabbitMQ estão ativos!
+
+### Passo 5 — Parar os containers
+docker-compose down
+````````
+
+## 📨 Testando com Payloads via RabbitMQ Management UI
+
+### Publicar mensagem na fila `user-created-queue`
+
+1. Acesse http://localhost:15672 → Aba **Queues** → `user-created-queue`
+2. Expanda a seção **Publish message**
+3. Em **Properties**, adicione: `content_type = application/json`
+4. Em **Payload**, cole o JSON abaixo e clique em **Publish message**:
+
+```
+{
+    "userId": "1",
+    "userName": "João Silva",
+    "userEmail": "joao.silva@example.com",
+    "createdAt": "2023-10-10T10:00:00Z"
+}
+```
+
+### Publicar mensagem na fila `payment-processed-queue` (Aprovado)
+
+1. Acesse http://localhost:15672 → Aba **Queues** → `payment-processed-queue`
+2. Expanda **Publish message**, defina `content_type = application/json`  
+3. Cole o payload e publique:
+{ "paymentId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", 
+  "userId": "d3b07384-d9a0-4e9b-8a0d-3e3b07384d9a", 
+  "userEmail": "lucas.nunes@email.com", 
+  "amount": 199.90, 
+  "status": "Approved", 
+  "processedAt": "2026-03-05T10:05:00Z" 
+}
