@@ -1,48 +1,47 @@
-﻿using NotificationsAPI.Domain.Entities;
+﻿using Microsoft.EntityFrameworkCore;
+using NotificationsAPI.Domain.Entities;
 using NotificationsAPI.Domain.Interfaces;
+using NotificationsAPI.Infrastructure.Persistence;
 
-namespace NotificationsAPI.Infrastructure.Repositories
+namespace NotificationsAPI.Infrastructure.Repositories;
+
+/// <summary>
+/// Repositório de notificações com Entity Framework Core
+/// </summary>
+public class NotificationRepository : INotificationRepository
 {
+    private readonly NotificationDbContext _context;
 
-    /// <summary>
-    /// Repositório em memória para notificações (substituir por EF Core em produção)
-    /// </summary>
-    public class NotificationRepository : INotificationRepository
+    public NotificationRepository(NotificationDbContext context)
     {
-        private static readonly List<Notification> _notifications = new();
+        _context = context;
+    }
 
-        public Task AddAsync(Notification notification)
-        {
-            _notifications.Add(notification);
-            Console.WriteLine($"💾 Notificação persistida: {notification.Id} | Tipo: {notification.Type} | Email: {notification.UserEmail}");
-            return Task.CompletedTask;
-        }
+    public async Task AddAsync(Notification notification)
+    {
+        await _context.Notifications.AddAsync(notification);
+    }
 
-        public Task<Notification?> GetByIdAsync(Guid id)
-        {
-            var notification = _notifications.FirstOrDefault(n => n.Id == id);
-            return Task.FromResult(notification);
-        }
+    public async Task<Notification?> GetByIdAsync(Guid id)
+    {
+        return await _context.Notifications.FindAsync(id);
+    }
 
-        public Task<IEnumerable<Notification>> GetByUserIdAsync(Guid userId)
-        {
-            var notifications = _notifications.Where(n => n.UserId == userId).AsEnumerable();
-            return Task.FromResult(notifications);
-        }
+    public async Task<IEnumerable<Notification>> GetByUserIdAsync(Guid userId)
+    {
+        return await _context.Notifications
+            .Where(n => n.UserId == userId)
+            .ToListAsync();
+    }
 
-        public Task UpdateAsync(Notification notification)
-        {
-            var index = _notifications.FindIndex(n => n.Id == notification.Id);
-            if (index >= 0)
-                _notifications[index] = notification;
+    public async Task UpdateAsync(Notification notification)
+    {
+        _context.Notifications.Update(notification);
+        await Task.CompletedTask;
+    }
 
-            return Task.CompletedTask;
-        }
-
-        public Task SaveChangesAsync()
-        {
-            // Em memória — sem operação. Com EF Core seria context.SaveChangesAsync()
-            return Task.CompletedTask;
-        }
+    public async Task SaveChangesAsync()
+    {
+        await _context.SaveChangesAsync();
     }
 }

@@ -1,321 +1,187 @@
 # 🔔 NotificationsAPI — FIAP Cloud Games (FCG)
 
-API de Notificações do FIAP Cloud Games (FCG) — Envio de e-mails de boas-vindas e confirmações de compra via RabbitMQ.
-
-**Stack**: .NET 8 | ASP.NET Core | RabbitMQ | Clean Architecture
+API de Notificações do **FIAP Cloud Games (FCG)** — responsável pelo envio de e-mails de boas-vindas e confirmações de compra, consumindo eventos via **RabbitMQ** e persistindo registros em **SQL Server** com **Entity Framework Core**.
 
 ---
 
-## 📁 Estrutura do Projeto
+## 📌 Contexto da Aplicação
 
-````````
-NotificationsAPI.Domain/
-├── Entities/
-│   └── Notification.cs          # Entidade de notificação
-├── Events/
-│   ├── UserCreatedEvent.cs      # Evento de usuário criado
-│   └── PaymentProcessedEvent.cs # Evento de pagamento
-└── Interfaces/
-    ├── IEmailSender.cs          # Contrato para envio de e-mail
-    ├── INotificationRepository.cs
-    └── IEventHandler.cs         # Contrato para handlers de evento
+O FIAP Cloud Games é uma plataforma de jogos em nuvem composta por microsserviços. A **NotificationsAPI** é o serviço responsável por:
 
+- **Consumir eventos** publicados por outros serviços (User Service, Payment Service) via filas do RabbitMQ
+- **Enviar e-mails** de boas-vindas quando um usuário é criado
+- **Enviar confirmações de compra** quando um pagamento é aprovado
+- **Persistir** todas as notificações enviadas no banco de dados SQL Server
 
-NotificationsAPI.Application/
-├── UseCases/
-│   ├── SendWelcomeEmailUseCase.cs
-│   └── SendPurchaseConfirmationUseCase.cs
-├── EventHandlers/
-│   ├── UserCreatedEventHandler.cs   # Consome UserCreatedEvent
-│   └── PaymentProcessedEventHandler.cs # Consome PaymentProcessedEvent
-├── DTOs/
-│   ├── UserCreatedEventDto.cs
-│   ├── PaymentProcessedEventDto.cs
-│   └── SendEmailDto.cs
-├── UseCases/
-│   ├── SendWelcomeEmailUseCase.cs
-│   └── SendPurchaseConfirmationUseCase.cs
-└── EventHandlers/
-    ├── UserCreatedEventHandler.cs   # Consome UserCreatedEvent
-    └── PaymentProcessedEventHandler.cs # Consome PaymentProcessedEvent├── UseCases/
-│   ├── SendWelcomeEmailUseCase.cs
-│   └── SendPurchaseConfirmationUseCase.cs
-└── EventHandlers/
-    ├── UserCreatedEventHandler.cs   # Consome UserCreatedEvent
-    └── PaymentProcessedEventHandler.cs # Consome PaymentProcessedEvent
+A API opera como um **worker assíncrono** que escuta filas do RabbitMQ em background via `BackgroundService`.
 
+### Fluxos suportados
 
+| Fila | Evento | Ação |
+|---|---|---|
+| `user-created-queue` | Usuário criado | Envia e-mail de boas-vindas e persiste no banco |
+| `payment-processed-queue` | Pagamento aprovado | Envia confirmação de compra e persiste no banco |
+| `payment-processed-queue` | Pagamento recusado | Apenas loga no console (sem persistência) |
 
-NotificationsAPI.Infrastructure/
-├── RabbitMQ/
-│   ├── RabbitMQConsumer.cs      # Consumidor genérico
-│   ├── RabbitMQPublisher.cs     # Publicador (futuro)
-│   └── RabbitMQSettings.cs      # Configurações
-├── Email/
-│   └── EmailService.cs          # Implementação de IEmailSender
-├── Repositories/
-│   └── NotificationRepository.cs # Persistência
-└── DependencyInjection.cs       # Registros de DI
+---
 
+## 🏗️ Arquitetura — Clean Architecture
 
-NotificationsAPI/
-├── Program.cs                   # Configuração de inicialização
-├── appsettings.json             # Credenciais RabbitMQ
-├── Controllers/
-│   └── NotificationsController.cs # Endpoints (opcional)
-└── HostedServices/
-    └── RabbitMQConsumerHostedService.cs # Serviço de fundo
+O projeto segue os princípios da **Clean Architecture**, separando responsabilidades em 4 camadas com dependências apontando sempre para o centro (Domain).
 
-````````
+### Camadas
 
-### 🎯 Responsabilidades de Cada Camada
+| Camada | Projeto | Responsabilidade | Dependências |
+|---|---|---|---|
+| **Domain** | `NotificationsAPI.Domain` | Entidades de negócio (`Notification`, `NotificationType`), interfaces (`IEmailSender`, `INotificationRepository`, `IEventHandler<T>`). Nenhuma lógica técnica. | Nenhuma |
+| **Application** | `NotificationsAPI.Application` | Use cases (`SendWelcomeEmailUseCase`, `SendPurchaseConfirmationUseCase`), event handlers que orquestram o fluxo, e DTOs de entrada. | Domain |
+| **Infrastructure** | `NotificationsAPI.Infrastructure` | Implementações concretas: `NotificationDbContext` (EF Core), `NotificationRepository`, `RabbitMQConsumer`, `EmailService` e registro de DI. | Domain, Application |
+| **API** | `NotificationsAPI` | `Program.cs` (startup), `RabbitMQConsumerHostedService` (background service), controllers e configuração do middleware. | Application, Infrastructure |
 
-#### **Domain** (Núcleo - Sem Dependências)
-- Entidades de negócio
-- Interfaces (contratos)
-- Exceções customizadas
-- Lógica de domínio pura
-- **Dependências**: Nenhuma
+### Fluxo interno de uma mensagem
 
-#### **Application** (Orquestração)
-- Use cases (aplicações)
-- DTOs (Data Transfer Objects)
-- Mappers
-- Validações
-- Orquestração de fluxos
-- **Dependências**: Domain
+O caminho que uma mensagem percorre desde a fila até o banco de dados:
 
-#### **Infrastructure** (Implementação Técnica)
-- Implementação de repositórios
-- Acesso a banco de dados (Entity Framework Core)
-- Serviços externos
-- Configuração de injeção de dependência
-- **Dependências**: Domain, Application
+| Etapa | Classe | Camada | O que faz |
+|---|---|---|---|
+| 1 | `RabbitMQConsumer<T>` | Infrastructure | Recebe a mensagem da fila e deserializa o JSON |
+| 2 | `IEventHandler<T>.HandleAsync()` | Application | Delega o processamento ao use case correspondente |
+| 3 | `UseCase.ExecuteAsync()` | Application | Monta o e-mail e cria a entidade `Notification` |
+| 4 | `IEmailSender.SendAsync()` | Infrastructure | Envia o e-mail (simulado no console) |
+| 5 | `INotificationRepository.AddAsync()` | Infrastructure | Insere o registro no SQL Server via EF Core |
+| 6 | `BasicAckAsync()` | Infrastructure | Confirma o processamento e remove a mensagem da fila |
 
-#### **API** (Apresentação)
-- Controllers
-- Configuração do middleware
-- Endpoints REST
-- Program.cs
-- **Dependências**: Application, Infrastructure
+---
 
-**Regra importante**: As dependências devem sempre apontar para o centro, nunca para fora.
+## 📁 Estrutura de Pastas
+NotificationsAPI/                              ← raiz do repositório ├── Dockerfile                                 # Build multi-stage da API ├── docker-compose.yml                         # Orquestração dos 3 containers ├── src/ │   ├── NotificationsAPI/                      # Camada de Apresentação (API) │   │   ├── Program.cs │   │   ├── appsettings.json │   │   ├── Controllers/ │   │   │   └── NotificationsController.cs │   │   └── HostedServices/ │   │       └── RabbitMQConsumerHostedService.cs │   │ │   ├── NotificationsAPI.Application/          # Camada de Aplicação │   │   ├── UseCases/ │   │   │   ├── SendWelcomeEmailUseCase.cs │   │   │   └── SendPurchaseConfirmationUseCase.cs │   │   ├── EventHandlers/ │   │   │   ├── UserCreatedEventHandler.cs │   │   │   └── PaymentProcessedEventHandler.cs │   │   └── DTOs/ │   │       ├── UserCreatedEventDto.cs │   │       └── PaymentProcessedEventDto.cs │   │ │   ├── NotificationsAPI.Domain/               # Camada de Domínio │   │   ├── Entities/ │   │   │   └── Notification.cs │   │   └── Interfaces/ │   │       ├── IEmailSender.cs │   │       ├── INotificationRepository.cs │   │       └── IEventHandler.cs │   │ │   └── NotificationsAPI.Infrastructure/       # Camada de Infraestrutura │       ├── Persistence/ │       │   └── NotificationDbContext.cs │       ├── Migrations/ │       │   └── ..._InitialCreate.cs │       ├── Repositories/ │       │   └── NotificationRepository.cs │       ├── RabbitMQ/ │       │   ├── RabbitMQConsumer.cs │       │   ├── RabbitMQPublisher.cs │       │   └── RabbitMQSettings.cs │       ├── Email/ │       │   └── EmailService.cs │       └── DependencyInjection/ │           └── DependencyInjection.cs
 
-## 🛠️ Tecnologias
+---
 
-- **.NET 8.0** - Framework
-- **ASP.NET Core** - Web API
-- **Nullable Reference Types** - Segurança de tipos
-- **Implicit Usings** - Redução de boilerplate
+## 🛠️ Tecnologias Utilizadas
 
-## 🚀 Como Começar
+| Tecnologia | Versão | Finalidade |
+|---|---|---|
+| .NET | 8.0 | Framework principal |
+| ASP.NET Core | 8.0 | Web API e Hosted Services |
+| Entity Framework Core | 8.0 | ORM, migrations e persistência |
+| SQL Server | 2022 | Banco de dados relacional |
+| RabbitMQ | 3.x | Message broker (protocolo AMQP) |
+| RabbitMQ.Client | 7.2.1 | Client .NET para RabbitMQ (API assíncrona) |
+| Docker / Docker Compose | 3.8 | Containerização e orquestração |
+| Swagger / OpenAPI | — | Documentação interativa da API |
+
+---
+
+## 🐳 Docker
+
+### Dockerfile — O que faz
+
+O `Dockerfile` na raiz do repositório utiliza **multi-stage build** para gerar uma imagem otimizada. O processo é dividido em 4 estágios:
+
+| Estágio | Imagem Base | O que faz |
+|---|---|---|
+| **base** | `mcr.microsoft.com/dotnet/aspnet:8.0` (~220MB) | Define a imagem de runtime leve usada na imagem final |
+| **build** | `mcr.microsoft.com/dotnet/sdk:8.0` (~900MB) | Copia os `.csproj`, restaura os pacotes NuGet e compila o projeto em modo Release |
+| **publish** | Herda do `build` | Executa `dotnet publish` para gerar os binários otimizados para produção |
+| **final** | Herda do `base` | Copia apenas os binários publicados (sem SDK, sem código fonte). Resultado: imagem leve de ~220MB |
+
+### docker-compose.yml — O que faz
+
+O `docker-compose.yml` orquestra **3 serviços** que se comunicam pela mesma rede Docker interna (`notifications-network`):
+
+| Serviço | Imagem | Portas | Descrição |
+|---|---|---|---|
+| **sql-server** | `mcr.microsoft.com/mssql/server:2022-latest` | `1433` | Banco de dados SQL Server. O volume `sqlserver-data` persiste os dados entre reinicializações. |
+| **rabbitmq** | `rabbitmq:3-management` | `5672` (AMQP), `15672` (UI) | Message broker com painel de gerenciamento web. |
+| **notifications-api** | Build local via `Dockerfile` | `8080` | API .NET 8. Aguarda SQL e RabbitMQ ficarem saudáveis antes de iniciar. |
+
+### Como a comunicação funciona
+
+| Aspecto | Detalhe |
+|---|---|
+| **Rede interna** | Todos os containers rodam na rede `notifications-network`. Eles se enxergam pelo nome do serviço (ex: `sql-server`, `rabbitmq`). |
+| **Variáveis de ambiente** | As variáveis definidas no `docker-compose.yml` sobrescrevem automaticamente os valores do `appsettings.json` (ex: `ConnectionStrings__ConnectionString`). |
+| **Healthcheck** | O `depends_on` com `condition: service_healthy` garante que a API só inicia quando SQL Server e RabbitMQ já aceitam conexões. |
+| **Migrations automáticas** | No startup da API, `db.Database.Migrate()` cria o database `fcg_notifications_db` e a tabela `Notifications` automaticamente. |
+| **Persistência** | O volume `sqlserver-data` garante que os dados do SQL Server não são perdidos ao parar os containers. |
+
+---
+
+## 🚀 Como Executar
 
 ### Pré-requisitos
-- .NET 8.0 SDK instalado
-- Visual Studio 2026 ou VS Code
 
+- [Docker Desktop](https://www.docker.com/products/docker-desktop/) instalado e rodando
+- [.NET 8.0 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (apenas para desenvolvimento local)
 
-┌─────────────────────────────────────────────────────────┐
-│                    NotificationsAPI                      │
-├─────────────────────────────────────────────────────────┤
-│                                                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-│  │   RabbitMQ   │  │   RabbitMQ   │  │   RabbitMQ   │  │
-│  │  Consumer 1  │  │  Consumer 2  │  │  Consumer 3  │  │
-│  │ (UserCreated)│  │(PaymentProc) │  │    (Other)   │  │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
-│         │                 │                 │           │
-│  ┌──────▼─────────────────▼─────────────────▼───────┐  │
-│  │              Application Layer                     │  │
-│  │  ┌──────────────┐  ┌──────────────────────┐       │  │
-│  │  │ UseCases     │  │ EventHandlers        │       │  │
-│  │  │ - SendWelcome│  │ - UserCreatedHandler │       │  │
-│  │  │ - SendConfirm│  │ - PaymentHandler     │       │  │
-│  │  └──────────────┘  └──────────────────────┘       │  │
-│  └──────┬──────────────────────────────────────────┬──┘  │
-│         │                                          │     │
-│  ┌──────▼──────────────┐  ┌────────────────────────▼──┐ │
-│  │ Domain Layer        │  │ Infrastructure Layer      │ │
-│  │ ┌────────────────┐  │  │ ┌────────────────────┐   │ │
-│  │ │ Entities       │  │  │ │ EmailService       │   │ │
-│  │ │ - Notification │  │  │ │ - SendAsync()      │   │ │
-│  │ │                │  │  │ │ RabbitMQ Client    │   │ │
-│  │ │ Interfaces     │  │  │ │ - Subscribe()      │   │ │
-│  │ │ - IEmailSender │  │  │ │ - Publish()        │   │ │
-│  │ │ - INotificationRep
-│  │ └────────────────┘  │  │ └────────────────────┘   │ │
-│  └─────────────────────┘  └───────────────────────────┘ │
-│                                                           │
-└─────────────────────────────────────────────────────────┘
+### Subir com Docker Compose (recomendado)
 
-````````
+Na raiz do repositório
+comando: docker-compose up --build
 
-Quando: Um usuário é criado em outro serviço
-Evento: UserCreatedEvent
-Estrutura:
-{
-    "userId": "guid",
-    "userName": "string",
-    "userEmail": "string",
-    "createdAt": "datetime"
-}
+Aguarde até ver no terminal:
+sql-server        | SQL Server is now ready for client connections rabbitmq          | Server startup complete notifications-api | info: Applying migration '20260311043114_InitialCreate' notifications-api | 🚀 Iniciando consumidores RabbitMQ... notifications-api | 🐇 Consumidor iniciado na fila: 'user-created-queue' notifications-api | 🐇 Consumidor iniciado na fila: 'payment-processed-queue' notifications-api | ✅ Todos os consumidores RabbitMQ estão ativos!
 
-Ação na NotificationsAPI:
-✉️ Enviar e-mail de boas-vindas
-   - Subject: "Bem-vindo ao nosso serviço!"
-   - Body: "Olá {userName}! Suas credenciais foram criadas."
-   - Destinatário: {userEmail}
+### URLs de Acesso
 
-Log no Console:
-📝 "Email de boas-vindas enviado para {userEmail}"
+| Serviço | URL | Credenciais |
+|---|---|---|
+| **Swagger UI** | http://localhost:8080/swagger | — |
+| **RabbitMQ Management** | http://localhost:15672 | `guest` / `guest` |
+| **SQL Server** | `localhost,1433` | `sa` / `OcP2020123` |
 
-Persistência:
-💾 Salvar registro de notificação (Notification)
+### Comandos Docker Úteis
 
-
-
-Quando: Um pagamento é processado em outro serviço
-Evento: PaymentProcessedEvent
-Estrutura:
-{
-    "paymentId": "guid",
-    "userId": "guid",
-    "userEmail": "string",
-    "amount": "decimal",
-    "status": "Approved | Declined",
-    "processedAt": "datetime"
-}
-
-Ação na NotificationsAPI:
-✉️ APENAS se status == "Approved"
-   - Subject: "Compra confirmada!"
-   - Body: "Olá! Sua compra de R$ {amount} foi confirmada."
-   - Destinatário: {userEmail}
-
-✉️ Se status == "Declined" (opcional, futuro)
-   - Subject: "Sua compra foi recusada"
-   - Body: "Desculpe, sua compra não foi processada."
-
-Log no Console:
-📝 "Email de confirmação de compra enviado para {userEmail}"
-ou
-📝 "Pagamento recusado - sem e-mail enviado"
-
-Persistência:
-💾 Salvar registro de notificação (Notification)
-
-````````
-
-Serviço A (User Service)
-  ↓
-  Usuário criado
-  ↓
-  Publica: UserCreatedEvent
-  ↓
-  RabbitMQ (Exchange → Queue)
-  ↓
-  NotificationsAPI (Consumer)
-  ↓
-  UserCreatedEventHandler
-  ↓
-  UseCase: SendWelcomeEmailUseCase
-  ↓
-  EmailService.SendAsync()
-  ↓
-  📝 Log no console
-  💾 Persistir notificação
-
-
-Serviço B (Payment Service)
-  ↓
-  Pagamento processado
-  ↓
-  Status = "Approved"
-  ↓
-  Publica: PaymentProcessedEvent
-  ↓
-  RabbitMQ (Exchange → Queue)
-  ↓
-  NotificationsAPI (Consumer)
-  ↓
-  PaymentProcessedEventHandler
-  ↓
-  Verifica: if (status == "Approved")
-  ↓
-  UseCase: SendPurchaseConfirmationUseCase
-  ↓
-  EmailService.SendAsync()
-  ↓
-  📝 Log no console
-  💾 Persistir notificação
-
-````````
+| Comando | O que faz |
+|---|---|
+| `docker-compose up --build` | Sobe todos os containers com rebuild |
+| `docker-compose up --build -d` | Sobe em background (detached) |
+| `docker logs -f notifications-api` | Mostra logs da API em tempo real |
+| `docker-compose down` | Para todos os containers |
+| `docker-compose down -v` | Para e apaga o volume do banco (reset completo) |
+| `docker-compose up --build notifications-api` | Rebuild apenas da API |
 
 ---
 
-## 🐳 Como Executar com Docker
-Para criar a imagem da API Notification executar o comando no terminal:
-docker build -t notifications-api .
+## 📨 Testando o Fluxo Completo
 
-Com a imagem criada, executar o comando para subir a API:
-docker run -d --name notifications-api -p 8080:8080 notifications-api
+### 1. Publicar mensagem — E-mail de boas-vindas
 
-**Obs.:** Certifique-se de que o RabbitMQ esteja rodando localmente ou em um container separado, e que as configurações de conexão estejam corretas no `appsettings.json` da API.
-É necessario ter um arquivo dockerfile na raiz do projeto com o seguinte conteúdo:
-```dockerfile
+Acesse o [RabbitMQ Management](http://localhost:15672) → **Queues** → `user-created-queue` → **Publish message**.
 
+Em **Payload**, cole:
+{ "userId": "3fa85f64-5717-4562-b3fc-2c963f66afa6", "userName": "Lucas Nunes", "userEmail": "lucas@teste.com", "createdAt": "2026-03-11T10:00:00Z" }
 
-Executar o comando no terminal para subir os containers do RabbitMQ:
-docker run -d --hostname my-rabbit --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+### 2. Publicar mensagem — Confirmação de compra (aprovado)
 
-Acesse o painel de gerenciamento do RabbitMQ:
+Na fila `payment-processed-queue` → **Publish message**:
 
-- **URL**: http://localhost:15672
-- **Usuário**: `guest`
-- **Senha**: `guest`
-
-Aguarde até que as filas `user-created-queue` e `payment-processed-queue` apareçam na aba **Queues** (são criadas automaticamente pelo consumidor da API).
-
-### Passo 3 — Acessar o Swagger
-
-- **URL**: http://localhost:8080/swagger/V1/swagger.json
-- **Swagger UI**: http://localhost:8080/swagger/index.html
-
-### Passo 4 — Verificar os logs
-docker-compose logs -f notifications-api
-
-Você deve ver:
-🚀 Iniciando consumidores RabbitMQ... 🐇 Consumidor iniciado na fila: 'user-created-queue' 🐇 Consumidor iniciado na fila: 'payment-processed-queue' ✅ Todos os consumidores RabbitMQ estão ativos!
-
-````````
-
-## 📨 Testando com Payloads via RabbitMQ Management UI
-
-### Publicar mensagem na fila `user-created-queue`
-
-1. Acesse http://localhost:15672 → Aba **Queues** → `user-created-queue`
-2. Expanda a seção **Publish message**
-3. Em **Properties**, adicione: `content_type = application/json`
-4. Em **Payload**, cole o JSON abaixo e clique em **Publish message**:
-
-```
 {
-    "userId": "1",
-    "userName": "João Silva",
-    "userEmail": "joao.silva@example.com",
-    "createdAt": "2023-10-10T10:00:00Z"
+  "userId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "purchaseId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "amount": 59.99,
+  "currency": "BRL",
+  "status": "Approved",
+  "processedAt": "2026-03-11T10:05:00Z"
 }
-```
 
-### Publicar mensagem na fila `payment-processed-queue` (Aprovado)
+### 3. Publicar mensagem — Confirmação de compra (recusado)
 
-1. Acesse http://localhost:15672 → Aba **Queues** → `payment-processed-queue`
-2. Expanda **Publish message**, defina `content_type = application/json`  
-3. Cole o payload e publique:
-{ "paymentId": "a1b2c3d4-e5f6-7890-abcd-ef1234567890", 
-  "userId": "d3b07384-d9a0-4e9b-8a0d-3e3b07384d9a", 
-  "userEmail": "lucas.nunes@email.com", 
-  "amount": 199.90, 
-  "status": "Approved", 
-  "processedAt": "2026-03-05T10:05:00Z" 
+Na fila `payment-processed-queue` → **Publish message**:
+
+{
+  "userId": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+  "purchaseId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "amount": 59.99,
+  "currency": "BRL",
+  "status": "Rejected",
+  "processedAt": "2026-03-11T10:07:00Z"
 }
+
+> Neste caso a API loga `⏭️ Pagamento recusado - nenhum e-mail enviado` e não persiste no banco.
+
+### 4. Verificar no banco de dados
+docker exec -it sql-server /opt/mssql-tools18/bin/sqlcmd 
+-S localhost -U sa -P "OcP2020123" -C -d fcg_notifications_db 
+-Q "SELECT Id, UserEmail, Subject, Type, IsSent FROM Notifications"
