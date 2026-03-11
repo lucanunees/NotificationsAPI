@@ -146,6 +146,15 @@ sql-server        | SQL Server is now ready for client connections rabbitmq     
 
 ## 📨 Testando o Fluxo Completo
 
+
+Fluxo:
+1.	O docker-compose sobe 3 serviços: sql-server, rabbitmq e notifications-api
+2.	A API espera o SQL Server e o RabbitMQ estarem prontos (depends_on + healthcheck)
+3.	A API se conecta ao SQL via DockerConnectionString (usando o nome do serviço sql-server como hostname)
+4.	A API se conecta ao RabbitMQ via hostname rabbitmq (nome do serviço)
+5.	Tudo roda na mesma rede Docker interna — os containers se enxergam pelo nome
+
+
 ### 1. Publicar mensagem — E-mail de boas-vindas
 
 Acesse o [RabbitMQ Management](http://localhost:15672) → **Queues** → `user-created-queue` → **Publish message**.
@@ -185,3 +194,4 @@ Na fila `payment-processed-queue` → **Publish message**:
 docker exec -it sql-server /opt/mssql-tools18/bin/sqlcmd 
 -S localhost -U sa -P "OcP2020123" -C -d fcg_notifications_db 
 -Q "SELECT Id, UserEmail, Subject, Type, IsSent FROM Notifications"
+
